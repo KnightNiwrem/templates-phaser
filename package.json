@@ -1,0 +1,26 @@
+{
+  "name": "template-phaser",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun --hot index.html",
+    "start": "bun index.html",
+    "build": "bun build ./index.html --outdir dist --target browser",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "bun test tests/unit tests/functional",
+    "test:e2e": "playwright test",
+    "test:agent": "bun tests/agent/probe.ts",
+    "check": "bun run typecheck && bun run lint && bun run test"
+  },
+  "dependencies": {
+    "phaser": "^4.2.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.4",
+    "@playwright/test": "^1.61.1",
+    "@types/bun": "latest",
+    "typescript": "^7.0.2"
+  }
+}
