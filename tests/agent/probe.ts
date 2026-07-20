@@ -49,7 +49,13 @@ async function main(): Promise<void> {
     await mkdir(ARTIFACTS, { recursive: true });
 
     browser = await chromium.launch();
-    const page = await browser.newPage({ viewport: { width: 960, height: 640 } });
+    // Mobile-first: probe with a phone-sized touch viewport.
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+      isMobile: true,
+    });
+    const page = await context.newPage();
     page.on("pageerror", (err) =>
       steps.push({ step: "pageerror", ok: false, detail: String(err) }),
     );
@@ -63,20 +69,32 @@ async function main(): Promise<void> {
     const initial = await page.evaluate(() => window.__gameState);
     steps.push({ step: "read-state", ok: true, detail: initial });
 
+    // Tap two tiles right of screen center: the cursor should follow the tap.
+    // Done first, while the camera is still centered on the boot cursor.
+    await page.touchscreen.tap(390 / 2 + 64, 844 / 2);
+    await Bun.sleep(100);
+    const tapped = await page.evaluate(() => window.__gameState?.cursor);
+    const tapOk =
+      !!initial && !!tapped && tapped.x === initial.cursor.x + 2 && tapped.y === initial.cursor.y;
+    steps.push({
+      step: "tap-moves-cursor",
+      ok: tapOk,
+      detail: { before: initial?.cursor, after: tapped },
+    });
+
     for (const key of ["ArrowRight", "ArrowDown", "ArrowLeft"] as const) {
       await page.keyboard.press(key);
     }
     await Bun.sleep(100);
     const moved = await page.evaluate(() => window.__gameState?.cursor);
-    const movedOk =
-      !!initial && !!moved && moved.x === initial.cursor.x + 0 && moved.y === initial.cursor.y + 1;
+    const movedOk = !!tapped && !!moved && moved.x === tapped.x && moved.y === tapped.y + 1;
     steps.push({
       step: "cursor-moves",
       ok: movedOk,
-      detail: { before: initial?.cursor, after: moved },
+      detail: { before: tapped, after: moved },
     });
 
-    await page.mouse.move(480, 320);
+    await page.mouse.move(195, 422);
     await page.mouse.down();
     await page.mouse.move(380, 260, { steps: 5 });
     await page.mouse.up();

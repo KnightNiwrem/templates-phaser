@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
     <title>template-phaser</title>
     <style>
       html,
@@ -10,10 +13,17 @@
         margin: 0;
         height: 100%;
         background: #0b1020;
+        overflow: hidden;
+        /* The game owns all touch gestures (pan, pinch); never scroll/zoom the page. */
+        touch-action: none;
+        overscroll-behavior: none;
       }
       #game {
-        display: flex;
-        justify-content: center;
+        width: 100vw;
+        height: 100dvh;
+      }
+      canvas {
+        display: block;
       }
     </style>
   </head>
