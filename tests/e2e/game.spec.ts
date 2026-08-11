@@ -50,19 +50,50 @@ test("drag panning does not move the cursor", async ({ page, isMobile }) => {
   expect(after).toEqual({ x: before.x, y: before.y });
 });
 
-test("arrow keys move the grid cursor and clamp at the map edge", async ({ page }) => {
+test("arrow keys nudge the grid cursor", async ({ page }) => {
   const before = await readCursor(page);
 
-  await page.keyboard.press("ArrowRight");
+  await pressKeyWithDwell(page, "ArrowRight");
   await expect.poll(() => readCursor(page).then((c) => c.x)).toBe(before.x + 1);
 
-  await page.keyboard.press("ArrowUp");
+  await pressKeyWithDwell(page, "ArrowUp");
   await expect.poll(() => readCursor(page).then((c) => c.y)).toBe(before.y - 1);
 
-  // Walk left past the west edge: the cursor must clamp at x = 0.
-  for (let i = 0; i < 50; i++) await page.keyboard.press("ArrowLeft");
+  await pressKeyWithDwell(page, "ArrowDown");
+  await expect.poll(() => readCursor(page).then((c) => c.y)).toBe(before.y);
+
+  await pressKeyWithDwell(page, "ArrowLeft");
+  await expect.poll(() => readCursor(page).then((c) => c.x)).toBe(before.x);
+});
+
+test("cursor clamps at the map edge", async ({ page }) => {
+  // Read the cursor's starting position so we know how many left-nudges will
+  // definitely walk past the edge (map is 40 tiles wide).
+  const start = await readCursor(page);
+
+  // Press with a delay: headless Chromium does not auto-repeat held keys, and
+  // a zero-dwell press can fall entirely between two Phaser frames on loaded
+  // runners. A small down-hold per press lets every JustDown edge land in a
+  // frame without depending on wall-clock sleeps.
+  for (let i = 0; i < start.x + 5; i++) {
+    await page.keyboard.press("ArrowLeft", { delay: 25 });
+  }
   expect((await readCursor(page)).x).toBe(0);
 });
+
+/**
+ * Phaser edge-consumes keys via JustDown in update(); a zero-dwell down+up
+ * (Playwright's press) can land entirely between two frames on slow or fully
+ * parallel runners, swallowing the press. Hold the key across at least one
+ * rendered frame so at least one update() observes the down edge.
+ */
+async function pressKeyWithDwell(page: Page, key: string): Promise<void> {
+  await page.keyboard.down(key);
+  await page.waitForFunction(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
+  await page.keyboard.up(key);
+}
 
 test("rendered frame matches the visual baseline", async ({ page }) => {
   const canvas = page.locator("#game canvas");

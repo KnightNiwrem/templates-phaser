@@ -15,6 +15,14 @@ declare global {
   interface Window {
     __game?: Phaser.Game;
     __gameState?: GameStateSnapshot;
+    /** Exposed for e2e tests & agent scripts that need to drive the save system
+     *  from inside the page. Only the pure store module — browser-dependent
+     *  helpers stay in ./save/storage. */
+    __saveStore?: { createSaveStore: typeof import("./save/store").createSaveStore };
+    __saveStorage?: {
+      LocalStorageBackend: typeof import("./save/storage").LocalStorageBackend;
+      persistStorage: typeof import("./save/storage").persistStorage;
+    };
   }
 }
 
