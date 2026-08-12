@@ -6,6 +6,77 @@ async function readCursor(page: Page): Promise<{ x: number; y: number }> {
   return cursor;
 }
 
+/**
+ * Hold `key` down until the cursor's `axis` coordinate reaches `expected`,
+ * then release.
+ *
+ * The scene reads arrow keys with Phaser's JustDown() inside update(), and
+ * key-up clears the just-down flag. A zero-dwell press (Playwright's
+ * keyboard.press with no delay) can deliver key-down and key-up between two
+ * game updates, so the press is never observed. Holding the key until the
+ * game visibly reacts makes each press deterministic; JustDown fires once per
+ * down transition, so holding cannot produce extra movements.
+ */
+async function holdKeyUntilCursorAt(
+  page: Page,
+  key: string,
+  axis: "x" | "y",
+  expected: number,
+): Promise<void> {
+  await page.keyboard.down(key);
+  try {
+    // waitForFunction polls on requestAnimationFrame, so the movement is seen
+    // within a frame of the update that applied it — expect.poll's 100ms+
+    // backoff intervals make a 20-tile walk overrun the test timeout on a
+    // loaded machine.
+    await page.waitForFunction(([a, v]) => window.__gameState?.cursor[a] === v, [
+      axis,
+      expected,
+    ] as const);
+  } catch (cause) {
+    const actual = await readCursor(page);
+    throw new Error(`held ${key} but cursor.${axis} is ${actual[axis]}, expected ${expected}`, {
+      cause,
+    });
+  } finally {
+    await page.keyboard.up(key);
+  }
+}
+
+/**
+ * Hold `key` down across at least `steps` full game steps, then release.
+ * For presses that produce no observable state change (e.g. pressing into a
+ * clamped map edge), this still guarantees the scene's update() ran while the
+ * key was down.
+ */
+async function holdKeyForSteps(page: Page, key: string, steps: number): Promise<void> {
+  await page.keyboard.down(key);
+  try {
+    await page.evaluate(
+      (count) =>
+        new Promise<void>((resolve, reject) => {
+          const game = window.__game;
+          if (!game) {
+            reject(new Error("game not published on window"));
+            return;
+          }
+          let seen = 0;
+          const onStep = (): void => {
+            seen += 1;
+            if (seen >= count) {
+              game.events.off("poststep", onStep);
+              resolve();
+            }
+          };
+          game.events.on("poststep", onStep);
+        }),
+      steps,
+    );
+  } finally {
+    await page.keyboard.up(key);
+  }
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => window.__gameState?.ready === true);
@@ -51,16 +122,24 @@ test("drag panning does not move the cursor", async ({ page, isMobile }) => {
 });
 
 test("arrow keys move the grid cursor and clamp at the map edge", async ({ page }) => {
+  // ~22 observable press cycles at 2-3 input roundtrips each; headless
+  // software rendering keeps the page main thread busy, so each roundtrip
+  // costs ~100ms and the walk needs more than the default 30s budget.
+  test.slow();
+
   const before = await readCursor(page);
 
-  await page.keyboard.press("ArrowRight");
-  await expect.poll(() => readCursor(page).then((c) => c.x)).toBe(before.x + 1);
+  await holdKeyUntilCursorAt(page, "ArrowRight", "x", before.x + 1);
+  await holdKeyUntilCursorAt(page, "ArrowUp", "y", before.y - 1);
 
-  await page.keyboard.press("ArrowUp");
-  await expect.poll(() => readCursor(page).then((c) => c.y)).toBe(before.y - 1);
+  // Walk to the west edge one observable press at a time.
+  for (let { x } = await readCursor(page); x > 0; x--) {
+    await holdKeyUntilCursorAt(page, "ArrowLeft", "x", x - 1);
+  }
 
-  // Walk left past the west edge: the cursor must clamp at x = 0.
-  for (let i = 0; i < 50; i++) await page.keyboard.press("ArrowLeft");
+  // One more press at the edge, held across full game steps so update()
+  // definitely saw it: the cursor must clamp at x = 0 rather than move.
+  await holdKeyForSteps(page, "ArrowLeft", 2);
   expect((await readCursor(page)).x).toBe(0);
 });
 
