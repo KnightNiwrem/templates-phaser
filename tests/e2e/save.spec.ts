@@ -1,7 +1,8 @@
 import { expect, type Page, test } from "@playwright/test";
+import { GAME_SAVE_KEY, GAME_SAVE_VERSION } from "../../src/save/gameSave";
 
-const SAVE_KEY = "template-phaser.save";
-const CURRENT_VERSION = 2;
+const SAVE_KEY = GAME_SAVE_KEY;
+const CURRENT_VERSION = GAME_SAVE_VERSION;
 
 async function waitForReady(page: Page): Promise<void> {
   await page.waitForFunction(() => window.__gameState?.ready === true);

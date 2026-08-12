@@ -32,10 +32,9 @@ describe("requestPersistentStorage", () => {
   });
 
   test("an unavailable API reports unsupported", async () => {
-    expect(await requestPersistentStorage(undefined)).toEqual({
-      supported: false,
-      persisted: false,
-    });
+    // Passing `undefined` explicitly would fall back to the ambient
+    // navigator.storage, which varies by runtime — a stubbed object with the
+    // methods missing is the deterministic way to test an unavailable API.
     expect(
       await requestPersistentStorage({} as Parameters<typeof requestPersistentStorage>[0]),
     ).toEqual({ supported: false, persisted: false });
@@ -52,5 +51,15 @@ describe("requestPersistentStorage", () => {
     expect(
       await requestPersistentStorage({ persisted: async () => false, persist: rejecting }),
     ).toEqual({ supported: true, persisted: false });
+  });
+
+  test("a rejected status query still attempts the persistence request", async () => {
+    const status = await requestPersistentStorage({
+      persisted: async () => {
+        throw new Error("denied");
+      },
+      persist: async () => true,
+    });
+    expect(status).toEqual({ supported: true, persisted: true });
   });
 });

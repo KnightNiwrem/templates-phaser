@@ -20,6 +20,8 @@ const MAX_ZOOM = 2.5;
  */
 export class GameScene extends Phaser.Scene {
   private cursor = { x: Math.floor(MAP_WIDTH / 2), y: Math.floor(MAP_HEIGHT / 2) };
+  /** Bumped on every player cursor move so a slow restore cannot clobber newer input. */
+  private cursorRevision = 0;
   private saveWarned = false;
   private cursorSprite!: Phaser.GameObjects.Image;
   private cursorKeys!: Phaser.Types.Input.Keyboard.CursorKeys;
@@ -103,18 +105,37 @@ export class GameScene extends Phaser.Scene {
   }
 
   private moveCursorTo(x: number, y: number): void {
+    this.cursorRevision++;
+    this.applyCursor(x, y);
+    this.persistCursor();
+  }
+
+  private applyCursor(x: number, y: number): void {
     this.cursor.x = clampTile(x, 0, MAP_WIDTH - 1);
     this.cursor.y = clampTile(y, 0, MAP_HEIGHT - 1);
     this.cursorSprite.setPosition(tileToWorld(this.cursor.x), tileToWorld(this.cursor.y));
     publishState({ cursor: { ...this.cursor } });
-    this.persistCursor();
   }
 
-  /** Boot must survive a missing, corrupt, or newer-format save. */
+  /**
+   * Boot must survive a missing, corrupt, or newer-format save. The scene is
+   * `ready` (interactive) before this resolves, so `window.__gameState.cursor`
+   * can briefly show the default tile before jumping to the restored one.
+   *
+   * Restoring deliberately does not go through moveCursorTo: it must not
+   * write the save back on every boot (or rewrite `updatedAt` when the
+   * player did nothing), and input that arrived while the load was pending
+   * must win over the restored value.
+   */
   private async restoreCursor(): Promise<void> {
+    const revisionBeforeLoad = this.cursorRevision;
     try {
       const data = await gameSaveManager.load();
-      if (data) this.moveCursorTo(data.cursor.x, data.cursor.y);
+      if (!data || this.cursorRevision !== revisionBeforeLoad) return;
+      this.applyCursor(data.cursor.x, data.cursor.y);
+      // The camera centered on the default cursor in create(); keep the
+      // restored cursor on screen.
+      this.cameras.main.centerOn(this.cursorSprite.x, this.cursorSprite.y);
     } catch (error) {
       console.warn("Could not restore save:", error);
     }

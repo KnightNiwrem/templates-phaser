@@ -21,9 +21,12 @@ export interface GameSaveData {
 
 /** Runtime validation — stored bytes are never trusted through TypeScript types alone. */
 export function isGameSaveData(value: unknown): value is GameSaveData {
-  if (typeof value !== "object" || value === null) return false;
+  // Arrays are rejected explicitly: expando properties on an array pass
+  // typeof/field checks but are dropped by JSON.stringify, so accepting one
+  // would write a save that can never be read back.
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const cursor = (value as Record<string, unknown>).cursor;
-  if (typeof cursor !== "object" || cursor === null) return false;
+  if (typeof cursor !== "object" || cursor === null || Array.isArray(cursor)) return false;
   const { x, y } = cursor as Record<string, unknown>;
   return Number.isInteger(x) && Number.isInteger(y) && (x as number) >= 0 && (y as number) >= 0;
 }

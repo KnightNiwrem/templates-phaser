@@ -24,6 +24,13 @@ describe("isGameSaveData", () => {
     expect(isGameSaveData({ cursor: { x: -1, y: 0 } })).toBe(false);
     expect(isGameSaveData({ cursor: { x: "1", y: 0 } })).toBe(false);
   });
+
+  test("rejects arrays even with expando properties", () => {
+    // JSON.stringify drops expando properties on arrays, so these would
+    // serialize into saves that can never be read back.
+    expect(isGameSaveData(Object.assign([], { cursor: { x: 1, y: 1 } }))).toBe(false);
+    expect(isGameSaveData({ cursor: Object.assign([], { x: 1, y: 1 }) })).toBe(false);
+  });
 });
 
 describe("game save migrations", () => {

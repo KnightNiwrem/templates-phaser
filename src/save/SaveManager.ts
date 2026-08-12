@@ -43,12 +43,17 @@ export interface SaveManagerOptions<T> {
 function isEnvelope(value: unknown): value is SaveEnvelope {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
+  // Timestamps must be finite: JSON.parse turns an oversized literal like
+  // 1e400 into Infinity, which JSON.stringify would then store as null,
+  // corrupting the envelope on its next write.
   return (
     typeof record.formatVersion === "number" &&
     Number.isInteger(record.formatVersion) &&
     record.formatVersion >= 1 &&
     typeof record.createdAt === "number" &&
+    Number.isFinite(record.createdAt) &&
     typeof record.updatedAt === "number" &&
+    Number.isFinite(record.updatedAt) &&
     "payload" in record
   );
 }
@@ -147,8 +152,9 @@ export class SaveManager<T> {
    * The complete stored envelope as a JSON string for the player to keep as
    * a backup, or null when no save exists. Returns the stored bytes verbatim
    * — export never migrates, so it cannot lose information, and a
-   * newer-format save can still be backed up. Corrupt values are not
-   * exportable.
+   * newer-format save can still be backed up. Anything else must prove
+   * usable first (parse, migrate, and validate in memory), so a corrupt
+   * value is never presented as a successful backup.
    */
   exportSave(): Promise<string | null> {
     return this.enqueue(() => this.performExport());
@@ -201,20 +207,21 @@ export class SaveManager<T> {
   private async performExport(): Promise<string | null> {
     const raw = await this.backend.read(this.key);
     if (raw === null) return null;
-    let value: unknown;
+    let envelope: SaveEnvelope;
     try {
-      value = JSON.parse(raw);
-    } catch (cause) {
-      throw new CorruptSaveError("stored save is not valid JSON", { cause });
+      envelope = this.parseEnvelope(raw, "stored");
+    } catch (error) {
+      // Exporting a newer save is allowed (it is a backup, and backups must
+      // not be blocked by build age); observing it has already armed the
+      // overwrite guard inside parseEnvelope. Anything else unparseable or
+      // unsupported is not a usable backup.
+      if (error instanceof FutureVersionError) return raw;
+      throw error;
     }
-    if (!isEnvelope(value)) {
-      throw new CorruptSaveError("stored value is not a save envelope");
-    }
-    if (value.formatVersion > this.currentVersion) {
-      // Exporting a newer save is allowed (it is a backup), but observing it
-      // still arms the overwrite guard.
-      this.observedNewerVersion = value.formatVersion;
-    }
+    // Prove the stored bytes are usable before presenting them as a backup.
+    // The migration/validation runs in memory only; the stored envelope is
+    // returned verbatim so no information is lost.
+    this.upgradePayload(envelope);
     return raw;
   }
 

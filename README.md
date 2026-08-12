@@ -152,8 +152,8 @@ Two honest limits, straight from the platform:
 ## Testing discipline
 
 - **Unit/functional (`bun:test`)** run without a DOM, so they may only import pure-logic
-  modules (`src/grid`, `src/world`). Importing `phaser` under Bun throws — anything
-  DOM-dependent belongs in e2e instead.
+  modules (`src/grid`, `src/world`, `src/save`). Importing `phaser` under Bun throws —
+  anything DOM-dependent belongs in e2e instead.
 - **E2E (`@playwright/test`)** boots the real game in Chromium with two projects:
   `mobile` (iPhone 13 viewport, touch emulation — mobile emulation is Chromium-only in
   Playwright, which is why no WebKit install is needed) and `desktop`. `playwright.config.ts`

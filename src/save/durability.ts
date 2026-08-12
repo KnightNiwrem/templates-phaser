@@ -31,11 +31,17 @@ export async function requestPersistentStorage(
   ) {
     return { supported: false, persisted: false };
   }
+  // Each call gets its own guard: a rejected status query must not skip the
+  // actual persistence request, and a rejection anywhere is an ordinary
+  // browser answer, never a startup error.
   try {
     if (await storage.persisted()) return { supported: true, persisted: true };
+  } catch {
+    // Fall through and still ask for persistence.
+  }
+  try {
     return { supported: true, persisted: await storage.persist() };
   } catch {
-    // A rejected persistence query is an ordinary browser answer.
     return { supported: true, persisted: false };
   }
 }

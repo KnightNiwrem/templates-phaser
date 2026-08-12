@@ -122,6 +122,29 @@ describe("SaveManager runtime validation and corruption", () => {
     await expect(manager.load()).rejects.toBeInstanceOf(CorruptSaveError);
   });
 
+  test("an envelope with non-finite timestamps is corruption", async () => {
+    // JSON.parse turns 1e400 into Infinity, which a later JSON.stringify
+    // would store as null — accepting it would corrupt the save on rewrite.
+    const { backend, manager } = createManager();
+    await backend.write(
+      KEY,
+      '{"formatVersion":1,"createdAt":1e400,"updatedAt":2000,"payload":{"hero":"ada"}}',
+    );
+    await expect(manager.load()).rejects.toBeInstanceOf(CorruptSaveError);
+  });
+
+  test("an import with non-finite timestamps cannot replace the existing save", async () => {
+    const { backend, manager } = createManager();
+    await manager.save({ hero: "ada" });
+    const before = await backend.read(KEY);
+    await expect(
+      manager.importSave(
+        '{"formatVersion":1,"createdAt":1e400,"updatedAt":2000,"payload":{"hero":"grace"}}',
+      ),
+    ).rejects.toBeInstanceOf(CorruptSaveError);
+    expect(await backend.read(KEY)).toBe(before);
+  });
+
   test("a later explicit save replaces a corrupt value instead of failing forever", async () => {
     const { backend, manager } = createManager();
     await backend.write(KEY, "garbage");
@@ -277,6 +300,54 @@ describe("SaveManager export/import", () => {
     expect(await manager.exportSave()).toBeNull();
     await backend.write(KEY, "garbage");
     await expect(manager.exportSave()).rejects.toBeInstanceOf(CorruptSaveError);
+  });
+
+  test("export refuses a current-version envelope with an invalid payload", async () => {
+    const { backend, manager } = createManager();
+    await backend.write(KEY, envelopeJson(1, { hero: 7 }));
+    await expect(manager.exportSave()).rejects.toBeInstanceOf(CorruptSaveError);
+  });
+
+  test("export returns an old-format save verbatim after proving it migratable", async () => {
+    const { backend, manager } = createManager({
+      currentVersion: 2,
+      migrations: [
+        {
+          fromVersion: 1,
+          migrate: (payload) => ({ hero: String((payload as { name: unknown }).name) }),
+        },
+      ],
+    });
+    const original = envelopeJson(1, { name: "ada" });
+    await backend.write(KEY, original);
+    expect(await manager.exportSave()).toBe(original);
+    // The migration ran in memory only; export does not rewrite the store.
+    expect(await backend.read(KEY)).toBe(original);
+  });
+
+  test("export refuses an old-format save whose migration fails", async () => {
+    const { backend, manager } = createManager({
+      currentVersion: 2,
+      migrations: [
+        {
+          fromVersion: 1,
+          migrate: () => {
+            throw new Error("boom");
+          },
+        },
+      ],
+    });
+    await backend.write(KEY, envelopeJson(1, { name: "ada" }));
+    await expect(manager.exportSave()).rejects.toBeInstanceOf(MigrationError);
+  });
+
+  test("a newer-format save exports verbatim and arms the overwrite guard", async () => {
+    const { backend, manager } = createManager();
+    const newer = envelopeJson(99, { anything: true });
+    await backend.write(KEY, newer);
+    expect(await manager.exportSave()).toBe(newer);
+    await expect(manager.save({ hero: "ada" })).rejects.toBeInstanceOf(FutureVersionError);
+    expect(await backend.read(KEY)).toBe(newer);
   });
 
   test("import round-trips an export", async () => {
