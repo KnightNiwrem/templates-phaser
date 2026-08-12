@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { clampTile, TILE_SIZE, tileToWorld, worldToTile } from "../grid/coords";
 import { GestureControls } from "../input/GestureControls";
+import { gameSaveManager } from "../save/browser";
 import { publishState } from "../state";
 import { generateTerrain } from "../world/terrain";
 
@@ -19,6 +20,11 @@ const MAX_ZOOM = 2.5;
  */
 export class GameScene extends Phaser.Scene {
   private cursor = { x: Math.floor(MAP_WIDTH / 2), y: Math.floor(MAP_HEIGHT / 2) };
+  /** Bumped on every player cursor move so a slow restore cannot clobber newer input. */
+  private cursorRevision = 0;
+  /** Set on any player pan so a slow restore does not re-center a camera the player moved. */
+  private cameraPanned = false;
+  private saveWarned = false;
   private cursorSprite!: Phaser.GameObjects.Image;
   private cursorKeys!: Phaser.Types.Input.Keyboard.CursorKeys;
   private panKeys!: {
@@ -54,6 +60,7 @@ export class GameScene extends Phaser.Scene {
     new GestureControls(this, camera, {
       onTap: (worldX, worldY) => this.moveCursorTo(worldToTile(worldX), worldToTile(worldY)),
       panBy: (dx, dy) => {
+        this.cameraPanned = true;
         camera.scrollX -= dx / camera.zoom;
         camera.scrollY -= dy / camera.zoom;
       },
@@ -78,6 +85,8 @@ export class GameScene extends Phaser.Scene {
       cursor: { ...this.cursor },
       mapSize: { width: MAP_WIDTH, height: MAP_HEIGHT },
     });
+
+    void this.restoreCursor();
   }
 
   override update(): void {
@@ -92,6 +101,14 @@ export class GameScene extends Phaser.Scene {
     if (this.panKeys.D.isDown) camera.scrollX += pan;
     if (this.panKeys.W.isDown) camera.scrollY -= pan;
     if (this.panKeys.S.isDown) camera.scrollY += pan;
+    if (
+      this.panKeys.A.isDown ||
+      this.panKeys.D.isDown ||
+      this.panKeys.W.isDown ||
+      this.panKeys.S.isDown
+    ) {
+      this.cameraPanned = true;
+    }
   }
 
   private moveCursor(dx: number, dy: number): void {
@@ -99,10 +116,54 @@ export class GameScene extends Phaser.Scene {
   }
 
   private moveCursorTo(x: number, y: number): void {
+    this.cursorRevision++;
+    this.applyCursor(x, y);
+    this.persistCursor();
+  }
+
+  private applyCursor(x: number, y: number): void {
     this.cursor.x = clampTile(x, 0, MAP_WIDTH - 1);
     this.cursor.y = clampTile(y, 0, MAP_HEIGHT - 1);
     this.cursorSprite.setPosition(tileToWorld(this.cursor.x), tileToWorld(this.cursor.y));
     publishState({ cursor: { ...this.cursor } });
+  }
+
+  /**
+   * Boot must survive a missing, corrupt, or newer-format save. The scene is
+   * `ready` (interactive) before this resolves, so `window.__gameState.cursor`
+   * can briefly show the default tile before jumping to the restored one.
+   *
+   * Restoring deliberately does not go through moveCursorTo: it must not
+   * write the save back on every boot (or rewrite `updatedAt` when the
+   * player did nothing), and input that arrived while the load was pending
+   * must win over the restored value.
+   */
+  private async restoreCursor(): Promise<void> {
+    const revisionBeforeLoad = this.cursorRevision;
+    try {
+      const data = await gameSaveManager.load();
+      if (!data || this.cursorRevision !== revisionBeforeLoad) return;
+      this.applyCursor(data.cursor.x, data.cursor.y);
+      // The camera centered on the default cursor in create(); keep the
+      // restored cursor on screen — unless the player has already panned
+      // somewhere else on purpose (zoom keeps its center, and a tap bumps
+      // cursorRevision, so pan is the only interaction to check).
+      if (!this.cameraPanned) {
+        this.cameras.main.centerOn(this.cursorSprite.x, this.cursorSprite.y);
+      }
+    } catch (error) {
+      console.warn("Could not restore save:", error);
+    }
+  }
+
+  private persistCursor(): void {
+    gameSaveManager.save({ cursor: { ...this.cursor } }).catch((error) => {
+      // A blocked or failing save (newer-format data, quota, private mode)
+      // must not break play; warn once instead of on every cursor move.
+      if (this.saveWarned) return;
+      this.saveWarned = true;
+      console.warn("Could not persist save:", error);
+    });
   }
 
   private zoomBy(factor: number): void {
