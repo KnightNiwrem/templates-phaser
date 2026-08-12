@@ -43,40 +43,6 @@ async function holdKeyUntilCursorAt(
   }
 }
 
-/**
- * Hold `key` down across at least `steps` full game steps, then release.
- * For presses that produce no observable state change (e.g. pressing into a
- * clamped map edge), this still guarantees the scene's update() ran while the
- * key was down.
- */
-async function holdKeyForSteps(page: Page, key: string, steps: number): Promise<void> {
-  await page.keyboard.down(key);
-  try {
-    await page.evaluate(
-      (count) =>
-        new Promise<void>((resolve, reject) => {
-          const game = window.__game;
-          if (!game) {
-            reject(new Error("game not published on window"));
-            return;
-          }
-          let seen = 0;
-          const onStep = (): void => {
-            seen += 1;
-            if (seen >= count) {
-              game.events.off("poststep", onStep);
-              resolve();
-            }
-          };
-          game.events.on("poststep", onStep);
-        }),
-      steps,
-    );
-  } finally {
-    await page.keyboard.up(key);
-  }
-}
-
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => window.__gameState?.ready === true);
@@ -137,9 +103,18 @@ test("arrow keys move the grid cursor and clamp at the map edge", async ({ page 
     await holdKeyUntilCursorAt(page, "ArrowLeft", "x", x - 1);
   }
 
-  // One more press at the edge, held across full game steps so update()
-  // definitely saw it: the cursor must clamp at x = 0 rather than move.
-  await holdKeyForSteps(page, "ArrowLeft", 2);
+  // Press into the edge and prove the press was seen: hold ArrowLeft and
+  // ArrowDown together. The same update() reads both keys, and the held
+  // ArrowDown produces an observable one-tile move, so once y has changed
+  // the left press has necessarily been consumed as well — x staying 0 is
+  // then a real clamp, not a dropped press.
+  const edge = await readCursor(page);
+  await page.keyboard.down("ArrowLeft");
+  try {
+    await holdKeyUntilCursorAt(page, "ArrowDown", "y", edge.y + 1);
+  } finally {
+    await page.keyboard.up("ArrowLeft");
+  }
   expect((await readCursor(page)).x).toBe(0);
 });
 
