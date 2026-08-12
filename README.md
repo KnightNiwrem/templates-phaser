@@ -70,19 +70,73 @@ src/
     rng.ts              Seeded deterministic PRNG (mulberry32)
   input/
     GestureControls.ts  Touch-primary gestures: tap, drag pan, pinch zoom
+  save/                 Versioned save system (see "Save system" below)
+    SaveManager.ts      Pure save logic: envelope, validation, migrations, queue
+    backend.ts          StorageBackend interface + memory/localStorage backends
+    errors.ts           Typed save errors (corrupt, future-version, migration, …)
+    durability.ts       Best-effort navigator.storage persistence helper
+    gameSave.ts         The demo game's save schema, validator, and migrations
+    browser.ts          Composition over localStorage + window.__save test hook
   world/
     terrain.ts          Seeded terrain generation + cellular smoothing
   scenes/
     BootScene.ts        Procedural texture generation, then starts GameScene
     GameScene.ts        Tilemap rendering, cursor, camera, input wiring
 tests/
-  unit/                 bun:test — pure logic (grid, coords, rng)
+  unit/                 bun:test — pure logic (grid, coords, rng, save system)
   functional/           bun:test — multi-unit behaviour (terrain generation)
   e2e/                  @playwright/test — mobile + desktop projects, real browser
   agent/
     probe.ts            Agent-runnable Playwright script; extend it for exploration
     artifacts/          Probe output (screenshot + JSON report), git-ignored
 ```
+
+## Save system
+
+`src/save/` ships a reusable, versioned save system so games built from this
+template do not reinvent serialization, migration, and persistence:
+
+- **Versioned envelope.** Saves are stored as
+  `{ formatVersion, createdAt, updatedAt, payload }` and runtime-validated on
+  every load — stored bytes are never trusted through TypeScript types alone.
+  Timestamps are metadata, not a concurrency mechanism.
+- **Automatic migrations.** Registered steps upgrade a supported old format in
+  order; an incomplete chain fails at construction, and stored data is only
+  replaced after migration + validation succeed. `src/save/gameSave.ts` keeps
+  a worked example (v1 flat cursor fields → v2 nested `cursor`). When you
+  replace the demo payload, reset the version to 1 and clear the migrations.
+- **Swappable storage.** Game code only talks to the async `SaveManager` API
+  (`load`, `save`, `exportSave`, `importSave`, `deleteSave`); raw
+  read/write/delete goes through a small `StorageBackend` interface. Swapping
+  localStorage for e.g. IndexedDB is a change in `src/save/browser.ts`, not in
+  game code.
+- **Safe export/import.** Export returns the complete stored envelope for the
+  player to keep as a backup; import parses, validates, and migrates entirely
+  in memory before replacing anything — a failed or future-version import
+  leaves the existing save untouched.
+- **Downgrade protection.** A well-formed envelope with a newer format version
+  (say, written by a newer build) fails with a typed `FutureVersionError`, and
+  once observed is never overwritten by this manager — even if its payload is
+  unreadable. Corruption is distinct (`CorruptSaveError`) and *is* replaceable
+  by a later explicit save, so a damaged value never wedges future writes.
+- **Ordered, catchable operations.** Operations queue per manager, so
+  unawaited saves apply in request order and a rejected write doesn't poison
+  later ones. All failures (including sync `localStorage` quota errors and
+  unserializable payloads) surface as promise rejections.
+
+Two honest limits, straight from the platform:
+
+- **`localStorage` has no cross-tab locking.** The HTML standard defines no
+  locking between separate agent clusters, so a stale tab can still race
+  between the manager's pre-write inspection and its write. The version checks
+  stop ordinary downgrade overwrites; absolute multi-tab compare-and-write
+  needs a transactional backend (e.g. IndexedDB).
+- **No browser storage is permanent.** Users can clear it, private sessions
+  discard it, and WebKit deletes script-writable storage after seven days of
+  Safari use without interaction with the site (Home Screen apps are exempt).
+  `src/save/durability.ts` asks for persistence via
+  `navigator.storage.persist()` at boot — a `false` answer is normal — and
+  export/import exists so players can keep backups outside the browser.
 
 ## Mobile-first design decisions
 
@@ -118,7 +172,10 @@ The game publishes a snapshot on `window` (see `src/state.ts`):
 ```ts
 window.__game       // the Phaser.Game instance
 window.__gameState  // { ready, scene, cursor: {x, y}, mapSize: {width, height} }
+window.__save       // { manager, key, version, persistence? } (src/save/browser.ts)
 ```
 
 E2e tests and agent scripts use this to observe the game; when you add game features,
-extend `GameStateSnapshot` and call `publishState(...)` from your scenes.
+extend `GameStateSnapshot` and call `publishState(...)` from your scenes. The `__save`
+hook exposes the live save manager so browser tests can drive persistence
+(`window.__save.manager.save(...)`, seed `localStorage` under `window.__save.key`, etc.).

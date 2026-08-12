@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { clampTile, TILE_SIZE, tileToWorld, worldToTile } from "../grid/coords";
 import { GestureControls } from "../input/GestureControls";
+import { gameSaveManager } from "../save/browser";
 import { publishState } from "../state";
 import { generateTerrain } from "../world/terrain";
 
@@ -19,6 +20,7 @@ const MAX_ZOOM = 2.5;
  */
 export class GameScene extends Phaser.Scene {
   private cursor = { x: Math.floor(MAP_WIDTH / 2), y: Math.floor(MAP_HEIGHT / 2) };
+  private saveWarned = false;
   private cursorSprite!: Phaser.GameObjects.Image;
   private cursorKeys!: Phaser.Types.Input.Keyboard.CursorKeys;
   private panKeys!: {
@@ -78,6 +80,8 @@ export class GameScene extends Phaser.Scene {
       cursor: { ...this.cursor },
       mapSize: { width: MAP_WIDTH, height: MAP_HEIGHT },
     });
+
+    void this.restoreCursor();
   }
 
   override update(): void {
@@ -103,6 +107,27 @@ export class GameScene extends Phaser.Scene {
     this.cursor.y = clampTile(y, 0, MAP_HEIGHT - 1);
     this.cursorSprite.setPosition(tileToWorld(this.cursor.x), tileToWorld(this.cursor.y));
     publishState({ cursor: { ...this.cursor } });
+    this.persistCursor();
+  }
+
+  /** Boot must survive a missing, corrupt, or newer-format save. */
+  private async restoreCursor(): Promise<void> {
+    try {
+      const data = await gameSaveManager.load();
+      if (data) this.moveCursorTo(data.cursor.x, data.cursor.y);
+    } catch (error) {
+      console.warn("Could not restore save:", error);
+    }
+  }
+
+  private persistCursor(): void {
+    gameSaveManager.save({ cursor: { ...this.cursor } }).catch((error) => {
+      // A blocked or failing save (newer-format data, quota, private mode)
+      // must not break play; warn once instead of on every cursor move.
+      if (this.saveWarned) return;
+      this.saveWarned = true;
+      console.warn("Could not persist save:", error);
+    });
   }
 
   private zoomBy(factor: number): void {
