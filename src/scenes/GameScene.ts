@@ -22,6 +22,8 @@ export class GameScene extends Phaser.Scene {
   private cursor = { x: Math.floor(MAP_WIDTH / 2), y: Math.floor(MAP_HEIGHT / 2) };
   /** Bumped on every player cursor move so a slow restore cannot clobber newer input. */
   private cursorRevision = 0;
+  /** Set on any player pan so a slow restore does not re-center a camera the player moved. */
+  private cameraPanned = false;
   private saveWarned = false;
   private cursorSprite!: Phaser.GameObjects.Image;
   private cursorKeys!: Phaser.Types.Input.Keyboard.CursorKeys;
@@ -58,6 +60,7 @@ export class GameScene extends Phaser.Scene {
     new GestureControls(this, camera, {
       onTap: (worldX, worldY) => this.moveCursorTo(worldToTile(worldX), worldToTile(worldY)),
       panBy: (dx, dy) => {
+        this.cameraPanned = true;
         camera.scrollX -= dx / camera.zoom;
         camera.scrollY -= dy / camera.zoom;
       },
@@ -98,6 +101,14 @@ export class GameScene extends Phaser.Scene {
     if (this.panKeys.D.isDown) camera.scrollX += pan;
     if (this.panKeys.W.isDown) camera.scrollY -= pan;
     if (this.panKeys.S.isDown) camera.scrollY += pan;
+    if (
+      this.panKeys.A.isDown ||
+      this.panKeys.D.isDown ||
+      this.panKeys.W.isDown ||
+      this.panKeys.S.isDown
+    ) {
+      this.cameraPanned = true;
+    }
   }
 
   private moveCursor(dx: number, dy: number): void {
@@ -134,8 +145,12 @@ export class GameScene extends Phaser.Scene {
       if (!data || this.cursorRevision !== revisionBeforeLoad) return;
       this.applyCursor(data.cursor.x, data.cursor.y);
       // The camera centered on the default cursor in create(); keep the
-      // restored cursor on screen.
-      this.cameras.main.centerOn(this.cursorSprite.x, this.cursorSprite.y);
+      // restored cursor on screen — unless the player has already panned
+      // somewhere else on purpose (zoom keeps its center, and a tap bumps
+      // cursorRevision, so pan is the only interaction to check).
+      if (!this.cameraPanned) {
+        this.cameras.main.centerOn(this.cursorSprite.x, this.cursorSprite.y);
+      }
     } catch (error) {
       console.warn("Could not restore save:", error);
     }

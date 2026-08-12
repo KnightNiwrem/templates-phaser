@@ -325,6 +325,15 @@ export class SaveManager<T> {
     };
     // JSON.stringify throws on cyclic or BigInt payloads; inside this async
     // method that surfaces as a promise rejection the caller can catch.
-    await this.backend.write(this.key, JSON.stringify(envelope));
+    const serialized = JSON.stringify(envelope);
+    // Serialization can also change shape without throwing — a `toJSON`
+    // method anywhere in the payload, or a broken injected clock turning a
+    // timestamp into null. Validate what a later load will actually read
+    // back, so an accepted save can never create an unreadable one.
+    const roundTripped: unknown = JSON.parse(serialized);
+    if (!isEnvelope(roundTripped) || !this.validatePayload(roundTripped.payload)) {
+      throw new InvalidPayloadError("payload does not survive JSON serialization");
+    }
+    await this.backend.write(this.key, serialized);
   }
 }

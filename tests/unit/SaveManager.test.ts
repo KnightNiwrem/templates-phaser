@@ -469,6 +469,25 @@ describe("SaveManager ordering and failure handling", () => {
     await expect(manager.save({ hero: "ada" })).rejects.toBe(quota);
   });
 
+  test("a payload whose toJSON changes its shape is rejected before writing", async () => {
+    // The object passes in-memory validation, but JSON.stringify invokes
+    // toJSON and would store `null` — an accepted save must never produce an
+    // unreadable one.
+    const { backend, manager } = createManager();
+    const shapeshifter = { hero: "ada", toJSON: () => null };
+    await expect(manager.save(shapeshifter as unknown as TestSave)).rejects.toBeInstanceOf(
+      InvalidPayloadError,
+    );
+    expect(await backend.read(KEY)).toBeNull();
+  });
+
+  test("a broken injected clock cannot write an unreadable envelope", async () => {
+    // NaN timestamps serialize to null, which the next load would reject.
+    const { backend, manager } = createManager({ now: () => Number.NaN });
+    await expect(manager.save({ hero: "ada" })).rejects.toBeInstanceOf(InvalidPayloadError);
+    expect(await backend.read(KEY)).toBeNull();
+  });
+
   test("a cyclic payload rejects instead of throwing synchronously", async () => {
     const { backend, manager } = createManager();
     const cyclic: TestSave & { self?: unknown } = { hero: "ada" };
