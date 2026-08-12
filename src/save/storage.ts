@@ -5,35 +5,34 @@
  * cover it from e2e instead.
  */
 
+import type { SaveBackend } from "./store";
+
 /** localStorage-backed {@link SaveBackend}. Async per contract; stored value is a UTF-8 envelope string. */
-export class LocalStorageBackend {
+export class LocalStorageBackend implements SaveBackend {
   constructor(private readonly key: string = "template-phaser-save") {}
 
-  load(): Promise<string | null> {
-    return Promise.resolve(window.localStorage.getItem(this.key));
+  async load(): Promise<string | null> {
+    return window.localStorage.getItem(this.key);
   }
 
-  save(payload: string): Promise<void> {
+  async save(payload: string): Promise<void> {
     window.localStorage.setItem(this.key, payload);
-    return Promise.resolve();
   }
 
-  exportBlob(): Promise<string> {
+  async exportBlob(): Promise<string> {
     const value = window.localStorage.getItem(this.key);
     if (value == null) {
       throw new Error("No saved data to export");
     }
-    return Promise.resolve(value);
+    return value;
   }
 
-  importBlob(payload: string): Promise<void> {
+  async importBlob(payload: string): Promise<void> {
     window.localStorage.setItem(this.key, payload);
-    return Promise.resolve();
   }
 
-  clear(): Promise<void> {
+  async clear(): Promise<void> {
     window.localStorage.removeItem(this.key);
-    return Promise.resolve();
   }
 }
 

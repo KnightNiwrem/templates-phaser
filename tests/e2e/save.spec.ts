@@ -32,11 +32,8 @@ test("save store round-trips through real localStorage", async ({ page }) => {
     await gameStore.save({ count: 7 });
     const loaded = await gameStore.load();
     const exported = await gameStore.exportData();
-    const before = window.localStorage.getItem("e2e-save-key");
     await gameStore.clear();
     const afterClear = await gameStore.load();
-    // Restore the saved envelope — other tests should find behaviour back at pre-test shape.
-    if (before != null) window.localStorage.setItem("e2e-save-key", before);
     return { loaded, exported, afterClear };
   });
   expect(result.loaded).toEqual({ count: 7 });

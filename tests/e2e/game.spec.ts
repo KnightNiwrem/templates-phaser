@@ -76,7 +76,7 @@ test("cursor clamps at the map edge", async ({ page }) => {
   // runners. A small down-hold per press lets every JustDown edge land in a
   // frame without depending on wall-clock sleeps.
   for (let i = 0; i < start.x + 5; i++) {
-    await page.keyboard.press("ArrowLeft", { delay: 25 });
+    await pressKeyWithDwell(page, "ArrowLeft");
   }
   expect((await readCursor(page)).x).toBe(0);
 });
@@ -87,10 +87,11 @@ test("cursor clamps at the map edge", async ({ page }) => {
  * parallel runners, swallowing the press. Hold the key across at least one
  * rendered frame so at least one update() observes the down edge.
  */
-async function pressKeyWithDwell(page: Page, key: string): Promise<void> {
+async function pressKeyWithDwell(page: Page, key: string, dwellMs = 40): Promise<void> {
   await page.keyboard.down(key);
-  await page.waitForFunction(
-    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  await page.evaluate(
+    (ms) => new Promise<boolean>((resolve) => setTimeout(() => resolve(true), ms)),
+    dwellMs,
   );
   await page.keyboard.up(key);
 }

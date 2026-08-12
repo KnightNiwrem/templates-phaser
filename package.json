@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "bun --hot index.html",
     "start": "bun index.html",
-    "build": "bun build ./index.html --outdir dist --target browser",
+    "build": "bun build ./index.html --outdir dist --target browser --define __PLAYWRIGHT__=false",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome check --write .",

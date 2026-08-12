@@ -30,7 +30,6 @@ export type StoragePayload = string;
  * at the cost of losing savedAt/updatedAt.
  */
 export interface SaveStoreOptions {
-  key?: string;
   redactTimestamps?: boolean;
 }
 
@@ -171,6 +170,16 @@ export function createSaveStore<TPayload>(opts: {
     return payload as TPayload;
   }
 
+  // Serialize all mutating store operations through one promise chain so
+  // overlapping calls cannot interleave their read-modify-write cycles
+  // (last requested write wins).
+  let queue: Promise<unknown> = Promise.resolve();
+  function enqueue<TOp>(op: () => Promise<TOp>): Promise<TOp> {
+    const result = queue.then(() => op());
+    queue = result.catch(() => {});
+    return result;
+  }
+
   return {
     CURRENT_VERSION: version,
     makeDefault,
@@ -182,20 +191,36 @@ export function createSaveStore<TPayload>(opts: {
     },
 
     async save(payload: TPayload): Promise<void> {
-      const raw = await backend.load();
-      const previous = raw != null ? deserialize(raw) : null;
-      const now = Date.now();
-      const stamped = stamp(
-        previous != null && typeof previous.savedAt === "number" ? previous.savedAt : now,
-        now,
-      );
-      const envelope: SaveEnvelope<TPayload> = {
-        version,
-        savedAt: stamped.savedAt,
-        updatedAt: stamped.updatedAt,
-        payload,
-      };
-      await backend.save(serialize(envelope));
+      return enqueue(async () => {
+        const raw = await backend.load();
+        let previous: SaveEnvelope<unknown> | null = null;
+        if (raw != null) {
+          try {
+            previous = deserialize(raw);
+          } catch {
+            // Corrupt or foreign stored value: treat as absent so save() can
+            // recover gracefully with a fresh envelope instead of rejecting.
+            previous = null;
+          }
+        }
+        if (previous != null && previous.version > version) {
+          throw new Error(
+            `Cannot save: stored version ${previous.version} is newer than CURRENT_VERSION ${version} — refusing to overwrite`,
+          );
+        }
+        const now = Date.now();
+        const stamped = stamp(
+          previous != null && typeof previous.savedAt === "number" ? previous.savedAt : now,
+          now,
+        );
+        const envelope: SaveEnvelope<TPayload> = {
+          version,
+          savedAt: stamped.savedAt,
+          updatedAt: stamped.updatedAt,
+          payload,
+        };
+        await backend.save(serialize(envelope));
+      });
     },
 
     async exportData(): Promise<StoragePayload> {
@@ -203,14 +228,27 @@ export function createSaveStore<TPayload>(opts: {
     },
 
     async importData(data: StoragePayload): Promise<TPayload> {
-      const envelope = deserialize(data);
-      const migrated = migrate(envelope);
-      await backend.importBlob(data);
-      return migrated;
+      return enqueue(async () => {
+        const envelope = deserialize(data);
+        const migrated = migrate(envelope);
+        const now = Date.now();
+        // Persist the migrated envelope at the current version so later load()
+        // calls skip migration and stay consistent with the returned payload.
+        const stamped = stamp(typeof envelope.savedAt === "number" ? envelope.savedAt : now, now);
+        await backend.importBlob(
+          serialize({
+            version,
+            savedAt: stamped.savedAt,
+            updatedAt: stamped.updatedAt,
+            payload: migrated,
+          }),
+        );
+        return migrated;
+      });
     },
 
     async clear(): Promise<void> {
-      await backend.clear();
+      return enqueue(() => backend.clear());
     },
   };
 }

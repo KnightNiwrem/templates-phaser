@@ -88,7 +88,7 @@ describe("save/store", () => {
         updatedAt: number;
       };
       expect(second.savedAt).toBe(first.savedAt);
-      expect(second.updatedAt).toBeGreaterThanOrEqual(second.savedAt);
+      expect(second.updatedAt).toBeGreaterThan(first.updatedAt);
     });
 
     test("redactTimestamps: true stamps -1/-1 deterministically", async () => {
@@ -336,5 +336,43 @@ describe("save/store", () => {
     } finally {
       Date.now = originalNow;
     }
+  });
+
+  test("importData persists the migrated envelope at the current version", async () => {
+    const backing = new Map<string, string>();
+    const backend = new MemoryBackend(backing);
+    const store = createSaveStore<V2>({
+      backend,
+      version: 2,
+      makeDefault: () => ({ name: "new", coins: 0, level: 1 }),
+      migrations: [{ from: 1, apply: (v: unknown) => ({ ...(v as V1), level: 1 }) }],
+    });
+    const rawV1 = JSON.stringify({
+      version: 1,
+      savedAt: 1,
+      updatedAt: 1,
+      payload: { name: "Ada", coins: 5 },
+    });
+    const imported = await store.importData(rawV1);
+    expect(imported).toEqual({ name: "Ada", coins: 5, level: 1 });
+    // The stored envelope should be at the current version so subsequent load() skips re-migration.
+    const stored = JSON.parse(backend.storedEnvelope()) as { version: number };
+    expect(stored.version).toBe(2);
+  });
+
+  test("unnested saves resolve in request order (last write wins)", async () => {
+    const backend = new MemoryBackend();
+    const store = createSaveStore<V1>({
+      backend,
+      version: 1,
+      makeDefault: () => ({ name: "new", coins: 0 }),
+      migrations: [],
+    });
+    // No awaits between these calls — the serialization chain must order them deterministically.
+    const first = store.save({ name: "first", coins: 1 });
+    const second = store.save({ name: "second", coins: 2 });
+    const third = store.save({ name: "third", coins: 3 });
+    await Promise.all([first, second, third]);
+    expect(await store.load()).toEqual({ name: "third", coins: 3 });
   });
 });
